@@ -7,6 +7,8 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -24,9 +26,13 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import com.olkazi.attendance.data.LocationHelper
 import com.olkazi.attendance.network.ApiClient
+import com.olkazi.attendance.network.Announcement
 import com.olkazi.attendance.network.AttendanceRecord
+import com.olkazi.attendance.network.LeaveRequest
+import com.olkazi.attendance.network.LeaveType
 import com.olkazi.attendance.network.SessionManager
 import kotlinx.coroutines.launch
+import java.util.Calendar
 
 class MainActivity : ComponentActivity() {
 
@@ -196,8 +202,16 @@ fun ClockHomeScreen(
     var isError by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
     var history by remember { mutableStateOf<List<AttendanceRecord>>(emptyList()) }
+    var announcements by remember { mutableStateOf<List<Announcement>>(emptyList()) }
     var tab by remember { mutableStateOf(0) }
     val scope = rememberCoroutineScope()
+
+    suspend fun refreshAnnouncements() {
+        try {
+            val resp = api.announcements(session.authHeader())
+            if (resp.success) announcements = resp.announcements
+        } catch (_: Exception) { }
+    }
 
     suspend fun refreshStatus() {
         try {
@@ -217,7 +231,7 @@ fun ClockHomeScreen(
         } catch (_: Exception) { }
     }
 
-    LaunchedEffect(Unit) { refreshStatus(); refreshHistory() }
+    LaunchedEffect(Unit) { refreshStatus(); refreshHistory(); refreshAnnouncements() }
 
     fun doClockAction(isIn: Boolean) {
         statusMsg = null
@@ -281,6 +295,11 @@ fun ClockHomeScreen(
                 )
                 NavigationBarItem(
                     selected = tab == 1, onClick = { tab = 1 },
+                    icon = { Icon(Icons.Default.EventNote, contentDescription = null) },
+                    label = { Text("Leave") }
+                )
+                NavigationBarItem(
+                    selected = tab == 2, onClick = { tab = 2 },
                     icon = { Icon(Icons.Default.History, contentDescription = null) },
                     label = { Text("History") }
                 )
@@ -358,7 +377,30 @@ fun ClockHomeScreen(
                         "Your location is only checked at the moment you tap Clock In/Out — you must be within your office's geofence.",
                         fontSize = 12.sp, color = Color.Gray
                     )
+
+                    if (announcements.isNotEmpty()) {
+                        Spacer(Modifier.height(28.dp))
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Start) {
+                            Icon(Icons.Default.Campaign, contentDescription = null, tint = Color(0xFFE6A817), modifier = Modifier.size(20.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("Announcements", fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                        }
+                        Spacer(Modifier.height(8.dp))
+                        announcements.forEach { ann ->
+                            Card(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+                                Column(Modifier.padding(12.dp)) {
+                                    Text(ann.title, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                                    Spacer(Modifier.height(2.dp))
+                                    Text(ann.content, fontSize = 13.sp, color = Color.DarkGray)
+                                    Spacer(Modifier.height(4.dp))
+                                    Text(ann.createdAt, fontSize = 11.sp, color = Color.Gray)
+                                }
+                            }
+                        }
+                    }
                 }
+            } else if (tab == 1) {
+                LeaveScreen(api = api, session = session)
             } else {
                 LazyColumn(Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 8.dp)) {
                     items(history) { rec ->
@@ -381,4 +423,232 @@ fun ClockHomeScreen(
             }
         }
     }
+}
+
+@Composable
+fun LeaveScreen(
+    api: com.olkazi.attendance.network.OlkaziApi,
+    session: SessionManager
+) {
+    var leaveTypes by remember { mutableStateOf<List<LeaveType>>(emptyList()) }
+    var requests by remember { mutableStateOf<List<LeaveRequest>>(emptyList()) }
+    var showApplySheet by remember { mutableStateOf(false) }
+    var loading by remember { mutableStateOf(true) }
+    val scope = rememberCoroutineScope()
+
+    suspend fun refresh() {
+        try {
+            val t = api.leaveTypes(session.authHeader())
+            if (t.success) leaveTypes = t.leaveTypes
+            val r = api.myLeaveRequests(session.authHeader())
+            if (r.success) requests = r.requests
+        } catch (_: Exception) { }
+        loading = false
+    }
+
+    LaunchedEffect(Unit) { refresh() }
+
+    Box(Modifier.fillMaxSize()) {
+        if (loading) {
+            CircularProgressIndicator(Modifier.align(Alignment.Center))
+        } else {
+            LazyColumn(Modifier.fillMaxSize().padding(16.dp)) {
+                item {
+                    Text("Leave Balances", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                    Spacer(Modifier.height(8.dp))
+                }
+                items(leaveTypes) { lt ->
+                    Card(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+                        Row(
+                            Modifier.fillMaxWidth().padding(12.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column {
+                                Text(lt.name, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                                Text("${lt.used} used of ${lt.allocated}", fontSize = 12.sp, color = Color.Gray)
+                            }
+                            Text("${lt.remaining} left", color = Color(0xFF1B5E3A), fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+                item { Spacer(Modifier.height(16.dp)) }
+                item {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                        Text("My Requests", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                        Button(onClick = { showApplySheet = true }) {
+                            Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text("Apply")
+                        }
+                    }
+                    Spacer(Modifier.height(8.dp))
+                }
+                items(requests) { req ->
+                    Card(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+                        Column(Modifier.padding(12.dp)) {
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                Text(req.leaveName, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                                StatusChip(req.status)
+                            }
+                            Spacer(Modifier.height(4.dp))
+                            Text("${req.startDate} → ${req.endDate}  (${req.daysRequested}d)", fontSize = 13.sp)
+                            req.reason?.let { if (it.isNotBlank()) Text(it, fontSize = 12.sp, color = Color.Gray) }
+                            req.reviewerNotes?.let {
+                                if (it.isNotBlank()) Text("Note: $it", fontSize = 12.sp, color = Color(0xFFC0392B))
+                            }
+                        }
+                    }
+                }
+                if (requests.isEmpty()) {
+                    item { Text("No leave requests yet.", modifier = Modifier.padding(top = 8.dp), color = Color.Gray) }
+                }
+            }
+        }
+    }
+
+    if (showApplySheet) {
+        ApplyLeaveDialog(
+            leaveTypes = leaveTypes,
+            onDismiss = { showApplySheet = false },
+            onSubmit = { typeId, start, end, reason, onResult ->
+                scope.launch {
+                    try {
+                        val resp = api.applyLeave(session.authHeader(), leaveTypeId = typeId, startDate = start, endDate = end, reason = reason)
+                        if (resp.success) {
+                            onResult(true, resp.message ?: "Submitted")
+                            refresh()
+                        } else {
+                            onResult(false, resp.error ?: "Something went wrong")
+                        }
+                    } catch (e: Exception) {
+                        onResult(false, "Couldn't reach the server. Check your connection.")
+                    }
+                }
+            }
+        )
+    }
+}
+
+@Composable
+fun StatusChip(status: String) {
+    val color = when (status) {
+        "approved" -> Color(0xFF1B5E3A)
+        "rejected" -> Color(0xFFC0392B)
+        "cancelled" -> Color.Gray
+        else -> Color(0xFFE6A817)
+    }
+    Box(
+        Modifier
+            .background(color.copy(alpha = 0.15f), shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp))
+            .padding(horizontal = 8.dp, vertical = 3.dp)
+    ) {
+        Text(status.uppercase(), color = color, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+    }
+}
+
+@Composable
+fun ApplyLeaveDialog(
+    leaveTypes: List<LeaveType>,
+    onDismiss: () -> Unit,
+    onSubmit: (Int, String, String, String, (Boolean, String) -> Unit) -> Unit
+) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    var selectedType by remember { mutableStateOf<LeaveType?>(leaveTypes.firstOrNull()) }
+    var typeMenuExpanded by remember { mutableStateOf(false) }
+    var startDate by remember { mutableStateOf("") }
+    var endDate by remember { mutableStateOf("") }
+    var reason by remember { mutableStateOf("") }
+    var submitting by remember { mutableStateOf(false) }
+    var resultMsg by remember { mutableStateOf<String?>(null) }
+    var resultIsError by remember { mutableStateOf(false) }
+
+    fun pickDate(onPicked: (String) -> Unit) {
+        val cal = Calendar.getInstance()
+        android.app.DatePickerDialog(
+            context,
+            { _, year, month, day ->
+                onPicked(String.format("%04d-%02d-%02d", year, month + 1, day))
+            },
+            cal.get(Calendar.YEAR), cal.get(Calendar.MONTH), cal.get(Calendar.DAY_OF_MONTH)
+        ).show()
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Apply for Leave") },
+        text = {
+            Column {
+                Box {
+                    OutlinedTextField(
+                        value = selectedType?.name ?: "Select leave type",
+                        onValueChange = {},
+                        readOnly = true,
+                        label = { Text("Leave Type") },
+                        modifier = Modifier.fillMaxWidth().clickable { typeMenuExpanded = true },
+                        trailingIcon = { Icon(Icons.Default.ArrowDropDown, contentDescription = null) }
+                    )
+                    DropdownMenu(expanded = typeMenuExpanded, onDismissRequest = { typeMenuExpanded = false }) {
+                        leaveTypes.forEach { lt ->
+                            DropdownMenuItem(
+                                text = { Text("${lt.name} (${lt.remaining} left)") },
+                                onClick = { selectedType = lt; typeMenuExpanded = false }
+                            )
+                        }
+                    }
+                }
+                Spacer(Modifier.height(10.dp))
+                OutlinedTextField(
+                    value = startDate, onValueChange = {}, readOnly = true,
+                    label = { Text("Start Date") },
+                    modifier = Modifier.fillMaxWidth().clickable { pickDate { startDate = it } },
+                    trailingIcon = { Icon(Icons.Default.CalendarToday, contentDescription = null) }
+                )
+                Spacer(Modifier.height(10.dp))
+                OutlinedTextField(
+                    value = endDate, onValueChange = {}, readOnly = true,
+                    label = { Text("End Date") },
+                    modifier = Modifier.fillMaxWidth().clickable { pickDate { endDate = it } },
+                    trailingIcon = { Icon(Icons.Default.CalendarToday, contentDescription = null) }
+                )
+                Spacer(Modifier.height(10.dp))
+                OutlinedTextField(
+                    value = reason, onValueChange = { reason = it },
+                    label = { Text("Reason") },
+                    modifier = Modifier.fillMaxWidth(),
+                    minLines = 2
+                )
+                resultMsg?.let {
+                    Spacer(Modifier.height(8.dp))
+                    Text(it, color = if (resultIsError) Color(0xFFC0392B) else Color(0xFF1B5E3A), fontSize = 13.sp)
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                enabled = !submitting,
+                onClick = {
+                    val type = selectedType
+                    if (type == null || startDate.isBlank() || endDate.isBlank() || reason.isBlank()) {
+                        resultMsg = "Please fill in all fields"
+                        resultIsError = true
+                        return@Button
+                    }
+                    submitting = true
+                    onSubmit(type.id, startDate, endDate, reason) { ok, msg ->
+                        submitting = false
+                        resultMsg = msg
+                        resultIsError = !ok
+                        if (ok) onDismiss()
+                    }
+                }
+            ) {
+                if (submitting) CircularProgressIndicator(Modifier.size(18.dp), color = Color.White, strokeWidth = 2.dp)
+                else Text("Submit")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        }
+    )
 }
