@@ -56,4 +56,33 @@ interface OlkaziApi {
         @Header("Authorization") authHeader: String,
         @Query("action") action: String = "history"
     ): HistoryResponse
+
+    @GET("leave.php")
+    suspend fun leaveTypes(
+        @Header("Authorization") authHeader: String,
+        @Query("action") action: String = "types"
+    ): LeaveTypesResponse
+
+    @GET("leave.php")
+    suspend fun myLeaveRequests(
+        @Header("Authorization") authHeader: String,
+        @Query("action") action: String = "my_requests"
+    ): LeaveRequestsResponse
+
+    @FormUrlEncoded
+    @POST("leave.php")
+    suspend fun applyLeave(
+        @Header("Authorization") authHeader: String,
+        @Field("action") action: String = "apply",
+        @Field("leave_type_id") leaveTypeId: Int,
+        @Field("start_date") startDate: String,
+        @Field("end_date") endDate: String,
+        @Field("reason") reason: String
+    ): LeaveApplyResponse
+
+    @GET("announcements.php")
+    suspend fun announcements(
+        @Header("Authorization") authHeader: String,
+        @Query("action") action: String = "list"
+    ): AnnouncementsResponse
 }
